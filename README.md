@@ -33,7 +33,7 @@ The plugin supports the following configuration options:
 | `url`           | the url of the remote server to fetch the JWT from | - |
 | `query_key`     | the query parameter to use to pass the `custom_id` on | `"username"` |
 | `response_key`  | the key in the response body to use as the JWT token | `"access_token"` |
-| `timout`        | timeout value (in seconds) to use when fetching the JWT from the remote server | `60` |
+| `timout`        | timeout value (in milliseconds) to use when fetching the JWT from the remote server | `60000` |
 | `keepalive`     | keepalive setting (in milliseconds) how long to keep connections unused in the keepalive pool | `60000` |
 | `shm`           | the shared memory zone to use for storing the cached JWT, use a custom template to add one to the Kong configuration | `"jwtstore"` |
 | `negative_ttl`  | the number of seconds to store negative responses from the remote server | `10` |

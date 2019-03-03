@@ -22,14 +22,14 @@ return {
       default = "access_token",
     },
     timeout = {
-      -- timeout when making the http request to fetch the JWT (in seconds)
+      -- timeout when making the http request to fetch the JWT (in ms)
       type = "integer",
-      default = 60,
+      default = 60000,
       required = true,
     },
     keepalive = {
-      -- connection keepalive in milliseconds
-      type = "number",
+      -- connection keepalive (in ms)
+      type = "integer",
       default = 60000,
       required = true,
     },
