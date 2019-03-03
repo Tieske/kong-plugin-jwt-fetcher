@@ -26,7 +26,7 @@ will not introspect the JWT nor validate it.
 
 ## Configuration
 
-The plugin supports the following confguration options:
+The plugin supports the following configuration options:
 
 | name            | description                                                                                    | default                                                       |
 | --------------- | ---------------------------------------------------------------------------------------------- | ---------- |
