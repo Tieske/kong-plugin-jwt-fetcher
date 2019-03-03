@@ -2,16 +2,12 @@
 --
 -- - only cache in SHM, since it is a single string value, adding lua-land
 --   lru caches seems just a waste of memory
--- - shm cache is indexed by the custom_id, so we assume a single remote server
---   if multiple plugin instances use different remote servers it could
---   cause collissions in then shm (effectively using the wrong JWT)
 -- - 404 expected if custom_id isn't found, makes it harder to spot errors
 --   when configured with a bad path...
 -- - 200 expected if custom_id is found and a jwt is returned
 -- - JWT validates exp only! downstream is doing validation!
 
 -- endpoint returns 200 for ok, everything else should result in a 500 from Kong with the error messages logged in Kong logs.
--- validate cache key to reuse plugin
 
 
 local plugin_name = ({...})[1]:match("^kong%.plugins%.([^%.]+)")  -- Grab pluginname from module name
@@ -38,10 +34,8 @@ local http = require "resty.http"
 local ngx_req_set_header = ngx.req.set_header
 local ngx_decode_base64 = ngx.decode_base64
 local string_rep = string.rep
-local url_cache = setmetatable({},{__mode="k"}) -- weak cache for parsed urls
-local md5_cache = setmetatable({},{__mode="k"}) -- weak cache for url md5 hashes
+local conf_cache -- cache for prepared conf, implementation below
 local ngx_now = ngx.now
-local ngx_md5 = ngx.md5
 local ngx_log = ngx.log
 local ngx_ERR = ngx.ERR
 local ngx_WARN = ngx.WARN
@@ -60,19 +54,6 @@ function plugin:new()
 end
 
 
-local function get_shm_key(conf, id)
-  -- we're using an MD5 of the url in the cache key, such that multiple
-  -- backend servers are in their own namespace in the cache without collissions
-  local url = conf.url
-  local md5 = md5_cache[url]
-  if not md5 then
-    md5 = ngx_md5(url)
-    md5_cache[url] = md5
-  end
-  return SHM_PREFIX .. md5 .. "-" ..id
-end
-
-
 -- Fetches JWT from remote server.
 -- @param conf plugin configuration
 -- @param id the custom_id for which to find the JWT
@@ -81,19 +62,7 @@ local function fetch_jwt(conf, id)
   local client = http.new()
   client:set_timeout(conf.timeout)
 
-  -- get url from cache, so we do not parse the url on each request, and we
-  -- prepare the query element
-  local url_elements = url_cache[conf]
-  if not url_elements then
-    url_elements = client:parse_uri(conf.url, false)
-    local query = url_elements[QUERY_ID]
-    if query == "" then query = nil end
-    query = query and "?" .. query .. "&" .. conf.query_key .. "="
-                  or "?" .. conf.query_key .. "="
-    url_elements[QUERY_ID] = query
-    -- store it in the cache
-    url_cache[conf] = url_elements
-  end
+  local url_elements = conf.url_elements
 
   assert(client:connect(url_elements[HOST_ID], url_elements[PORT_ID]))
 
@@ -246,7 +215,7 @@ end
 -- @return jwt, or nil if not found, or nil+err in case of error
 local function get_jwt(conf, id)
   local shm = ngx.shared[conf.shm]
-  local key = get_shm_key(conf, id)
+  local key = conf.shm_key_prefix .. id
 
   if not shm then
     error(("shm by name '%s' not found"):format(tostring(conf.shm)))
@@ -291,7 +260,7 @@ local function get_jwt(conf, id)
   if not jwt then
     -- no JWT, so do negative caching
     jwt = NOT_FOUND_TOKEN
-    ttl = conf.negative_ttl/1000  -- convert to seconds
+    ttl = conf.negative_ttl
 
   else
     -- got a JWT, go check the ttl
@@ -313,9 +282,52 @@ local function get_jwt(conf, id)
 end
 
 
+-- convert plugin config.
+-- Do conversions once here to prevent doing it on every call
+local function prepare_conf(conf)
+  local result = {}
+  -- copy the table
+  for k,v in pairs(conf) do
+    result[k] = v
+  end
+  -- convert ttl to seconds
+  result.negative_ttl = conf.negative_ttl/1000
+
+  -- parse url
+  local url_elements = http:parse_uri(conf.url, false)
+
+  -- prepare query element
+  local query = url_elements[QUERY_ID]
+  if query == "" then query = nil end
+  query = query and "?" .. query .. "&" .. conf.query_key .. "="
+                or "?" .. conf.query_key .. "="
+  url_elements[QUERY_ID] = query
+  result.url_elements = url_elements
+
+  -- create shm-key prefix
+  result.shm_key_prefix = SHM_PREFIX .. conf.url .. ":"
+
+  -- store it in the cache
+  conf_cache[conf] = result
+
+  return result
+end
+
+
+conf_cache = setmetatable({}, {
+  __mode = "k",
+  __index = function(self, conf)
+    -- the prepared conf table isn't found, create it now and cache it
+    local new_conf = prepare_conf(conf)
+    self[conf] = new_conf
+    return new_conf
+  end
+})
+
 
 function plugin:access(conf)
   plugin.super.access(self)
+  conf = conf_cache[conf]
 
   local id = (ngx.ctx.authenticated_consumer or EMPTY).custom_id
   if id then

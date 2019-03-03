@@ -116,10 +116,10 @@ local function http_server(status, body, ...)
 end
 
 
-local plugin  -- forward declaration to hold the created plugin
+local plugin1, plugin3  -- forward declaration to hold the created plugins
 
 -- start the test webserver, and update our plugin with the proper port
-local function server(response, ...)
+local function server(plugin, response, ...)
   local port, thread, err = http_server(response.status, response.body, ...)
 
   -- the server is at a dynamic port, so we must now patch the plugin
@@ -157,7 +157,7 @@ local function jwt(exp, claims)
     claims = claims or {}
     claims.exp = ngx.time() + exp
   end
-  return (ngx.encode_base64("hello", true) .. "." ..
+  return (ngx.encode_base64("hello" .. math.random(0,1000), true) .. "." ..
           ngx.encode_base64(json.encode(claims), true) .. "." ..
           ngx.encode_base64("world", true)):gsub("%-", "+"):gsub("_", "/")
 end
@@ -177,7 +177,7 @@ for _, strategy in helpers.each_strategy() do
           hosts = { "test1.com" },
         })
 
-        plugin = bp.plugins:insert {
+        plugin1 = bp.plugins:insert {
           name = "jwt-fetcher",
           route_id = route1.id,
           config = {
@@ -230,6 +230,36 @@ for _, strategy in helpers.each_strategy() do
         }
       end
 
+      do -- create a route with key-auth, jwt-fetcher
+         -- to test that 2 JWT servers do not share a cache entry
+         -- (no key collissions)
+        local route3 = bp.routes:insert({
+          hosts = { "test3.com" },
+        })
+
+        plugin3 = bp.plugins:insert {
+          name = "jwt-fetcher",
+          route_id = route3.id,
+          config = {
+            url          = "http://localhost:123/getotherjwt", -- different path!
+            query_key    = "username",
+            response_key = "access_token",
+            timeout      = 60000,
+            keepalive    = 60000,
+            shm          = "kong_cache",
+            negative_ttl = 10000,
+            skew         = 0,
+          },
+        }
+
+        bp.plugins:insert {
+          name = "key-auth",
+          route_id = route3.id,
+          config = {},
+        }
+      end
+
+
       -- start kong
       assert(helpers.start_kong({
         -- set the strategy
@@ -259,13 +289,13 @@ for _, strategy in helpers.each_strategy() do
     describe("request", function()
       it("succeeds with a proper credential", function()
         local token = jwt(10)
-        local thread = assert(server {
+        local thread = assert(server(plugin1, {
           -- define the response we want from the JWT test server
           status = 200,
           body = {
             access_token = token,
           }
-        })
+        }))
         -- Now hit Kong with a request
         local r = assert(client:send {
           method = "GET",
@@ -292,13 +322,13 @@ for _, strategy in helpers.each_strategy() do
 
       it("token gets cached for 'exp' time", function()
         local token = jwt(1)    -- 1 second cache time
-        local thread = assert(server {
+        local thread = assert(server(plugin1, {
           -- define the response we want from the JWT test server
           status = 200,
           body = {
             access_token = token,
           }
-        })
+        }))
         -- Now hit Kong with a request
         local r = assert(client:send {
           method = "GET",
@@ -346,15 +376,69 @@ for _, strategy in helpers.each_strategy() do
       end)
 
 
+      it("token gets cached per JWT server without cache-colissions", function()
+        local token1 = jwt(10)
+        local thread = assert(server(plugin1, {
+          -- define the response we want from the JWT test server
+          status = 200,
+          body = {
+            access_token = token1,
+          }
+        }))
+        -- Now hit Kong with a request
+        local r = assert(client:send {
+          method = "GET",
+          path = "/",
+          headers = {
+            host = "test1.com",
+            apikey = "king-kong",
+          }
+        })
+        assert(thread:join())  -- close up server
+
+        -- validate that the request succeeded, response status 200
+        assert.response(r).has.status(200)
+        -- validate the upstream header to be the newly created token
+        local header_value = assert.request(r).has.header("Authorization")
+        assert.equal("Bearer " .. token1, header_value)
+
+        -- now, setup server for plugin3.
+        -- without cache collisions, the endpoint is queried, if there are
+        -- colissions, it will simply return the cached one without querying.
+        local token3 = jwt(10)
+        thread = assert(server(plugin3, {
+          -- define the response we want from the JWT test server
+          status = 200,
+          body = {
+            access_token = token3,
+          }
+        }))
+        r = assert(client:send {
+          method = "GET",
+          path = "/",
+          headers = {
+            host = "test3.com",  -- to hit plugin3
+            apikey = "king-kong",
+          }
+        })
+        assert(thread:join())  -- close up server
+
+        assert.response(r).has.status(200)
+        -- validate the upstream header to be the newly created token
+        header_value = assert.request(r).has.header("Authorization")
+        assert.equal("Bearer " .. token3, header_value)
+      end)
+
+
       it("fails with 403 on an expired JWT", function()
         local token = jwt(-10)
-        local thread = assert(server {
+        local thread = assert(server(plugin1, {
           -- define the response we want from the JWT test server
           status = 200,
           body = {
             access_token = token,
           }
-        })
+        }))
         -- Now hit Kong with a request
         local r = assert(client:send {
           method = "GET",
@@ -386,13 +470,13 @@ for _, strategy in helpers.each_strategy() do
 
       it("fails with 500 on an invalid JWT", function()
         local token = "ThisIsNotAValidJWT"
-        local thread = assert(server {
+        local thread = assert(server(plugin1, {
           -- define the response we want from the JWT test server
           status = 200,
           body = {
             access_token = token,
           }
-        })
+        }))
         -- Now hit Kong with a request
         local r = assert(client:send {
           method = "GET",
