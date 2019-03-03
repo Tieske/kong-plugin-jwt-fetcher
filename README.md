@@ -36,7 +36,7 @@ The plugin supports the following configuration options:
 | `timout`        | timeout value (in milliseconds) to use when fetching the JWT from the remote server | `60000` |
 | `keepalive`     | keepalive setting (in milliseconds) how long to keep connections unused in the keepalive pool | `60000` |
 | `shm`           | the shared memory zone to use for storing the cached JWT, use a custom template to add one to the Kong configuration | `"jwtstore"` |
-| `negative_ttl`  | the number of seconds to store negative responses from the remote server | `10` |
+| `negative_ttl`  | the number of milliseconds to store negative responses from the remote server | `10000` |
 | `skew`          | maximum clock skew to accept. The `exp` claim is extended with this value to prevent diverging system clocks from failing requests | `0` |
 
 

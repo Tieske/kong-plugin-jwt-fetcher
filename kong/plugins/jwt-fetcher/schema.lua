@@ -41,8 +41,9 @@ return {
     },
     negative_ttl = {
       -- if a JWT is not on the remote server, how long to cache that fact
+      -- (in ms)
       type = "integer",
-      default = 10,
+      default = 10000,
       required = true,
     },
     skew = {

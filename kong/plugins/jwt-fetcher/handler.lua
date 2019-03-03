@@ -291,7 +291,7 @@ local function get_jwt(conf, id)
   if not jwt then
     -- no JWT, so do negative caching
     jwt = NOT_FOUND_TOKEN
-    ttl = conf.negative_ttl
+    ttl = conf.negative_ttl/1000  -- convert to seconds
 
   else
     -- got a JWT, go check the ttl

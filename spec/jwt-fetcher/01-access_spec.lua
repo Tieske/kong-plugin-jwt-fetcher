@@ -187,7 +187,7 @@ for _, strategy in helpers.each_strategy() do
             timeout      = 60000,
             keepalive    = 60000,
             shm          = "kong_cache",
-            negative_ttl = 10,
+            negative_ttl = 10000,
             skew         = 0,
           },
         }
@@ -224,7 +224,7 @@ for _, strategy in helpers.each_strategy() do
             timeout      = 60000,
             keepalive    = 60000,
             shm          = "kong_cache",
-            negative_ttl = 10,
+            negative_ttl = 10000,
             skew         = 0,
           },
         }
